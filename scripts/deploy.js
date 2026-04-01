@@ -1,7 +1,7 @@
 /**
  * scripts/deploy.js
  * ─────────────────────────────────────────────────────────────────────────────
- * Deploys FlashLoanArbitrage to Base mainnet (or fork).
+ * Deploys FlashLoanArbitrageV2 to Base mainnet (or fork).
  *
  * Usage:
  *   npx hardhat run scripts/deploy.js --network base
@@ -27,7 +27,7 @@ async function main() {
   }
 
   const [deployer] = await ethers.getSigners();
-  console.log(`\n🚀 Deploying FlashLoanArbitrage`);
+  console.log(`\n🚀 Deploying FlashLoanArbitrageV2`);
   console.log(`   Network  : ${network}`);
   console.log(`   Deployer : ${deployer.address}`);
   console.log(`   Aave AP  : ${provider}`);
@@ -37,7 +37,7 @@ async function main() {
 
   // ── Deploy ────────────────────────────────────────────────────────────────
 
-  const Factory = await ethers.getContractFactory("FlashLoanArbitrage");
+  const Factory = await ethers.getContractFactory("FlashLoanArbitrageV2");
   const contract = await Factory.deploy(provider, {
     gasLimit: 2_000_000,
   });
@@ -45,7 +45,7 @@ async function main() {
   await contract.waitForDeployment();
   const address = await contract.getAddress();
 
-  console.log(`✅ FlashLoanArbitrage deployed!`);
+  console.log(`✅ FlashLoanArbitrageV2 deployed!`);
   console.log(`   Address  : ${address}`);
   console.log(`\n📋 Add to your .env:`);
   console.log(`   CONTRACT_ADDRESS=${address}\n`);

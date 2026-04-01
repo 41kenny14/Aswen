@@ -17,17 +17,30 @@ function required(key) {
 function optional(key, def) { return process.env[key] ?? def; }
 
 function parsePairs(raw) {
-  return raw.split(",").map(e => {
+  const pairs = raw.split(",").map(e => {
     const [symbol, token0, dec0, token1, dec1] = e.trim().split(":");
+    if (!symbol || !token0 || !token1) {
+      throw new Error(`Invalid TOKEN_PAIRS entry: ${e}`);
+    }
     return { symbol, token0: token0.trim(), token1: token1.trim(), decimals0: +dec0 || 18, decimals1: +dec1 || 18 };
   });
+  if (pairs.length === 0) throw new Error("TOKEN_PAIRS cannot be empty");
+  return pairs;
 }
 
 function parseDexConfigs(raw) {
-  return raw.split(",").map(e => {
+  const dexes = raw.split(",").map(e => {
     const [name, version, factory, router] = e.trim().split(":");
+    if (!name || !version || !factory || !router) {
+      throw new Error(`Invalid DEX_CONFIGS entry: ${e}`);
+    }
+    if (+version !== 2 && +version !== 3) {
+      throw new Error(`DEX version must be 2 or 3: ${e}`);
+    }
     return { name, version: +version, factory: factory.trim(), router: router.trim() };
   });
+  if (dexes.length === 0) throw new Error("DEX_CONFIGS cannot be empty");
+  return dexes;
 }
 
 const config = {

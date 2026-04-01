@@ -111,8 +111,7 @@ class MevSender {
 
     // Deadline: current block + 2 blocks forward (~4 seconds on Base)
     // Short deadline reduces sandwich attack window significantly
-    const block    = await this.provider.getBlockNumber();
-    const deadline = BigInt(block) * 2n + BigInt(Math.floor(Date.now() / 1000)) + 8n;
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 8);
 
     const txArgs = [
       asset,

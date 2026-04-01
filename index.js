@@ -67,6 +67,7 @@ async function main() {
 
   // ── 3. Start failsafe watchdog ──────────────────────────────────────────────
   const failsafe = new Failsafe(scanner);
+  scanner.attachFailsafe(failsafe);
   failsafe.start();
 
   logger.info("\n✅ System fully operational — monitoring 24/7\n");

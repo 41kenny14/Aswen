@@ -54,6 +54,7 @@ class PipelineRunner {
   constructor(preloaderState) {
     this.state    = preloaderState;
     this.provider = preloaderState.wallet?.provider;
+    this.failsafe = null;
 
     // Initialize singletons once
     if (!_ranker)    _ranker    = new OpportunityRanker();
@@ -184,10 +185,12 @@ class PipelineRunner {
         });
 
         _ranker.recordSuccess(route.id);
+        this.failsafe?.recordExecutionSuccess?.();
         return true;
 
       } catch (err) {
         _ranker.recordFailure(route.id);
+        this.failsafe?.recordExecutionFailure?.(err.message);
         reason = `TX error: ${err.message}`;
         logger.error(`  ❌ TX failed: ${err.message}`);
         return false;
@@ -267,6 +270,10 @@ class PipelineRunner {
   _genOpportunityId(routeId, amount) {
     const raw = `${routeId}:${amount}:${Date.now()}`;
     return "0x" + crypto.createHash("sha256").update(raw).digest("hex").slice(0, 64);
+  }
+
+  attachFailsafe(failsafe) {
+    this.failsafe = failsafe;
   }
 }
 
