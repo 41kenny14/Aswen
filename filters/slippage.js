@@ -70,11 +70,12 @@ class SlippageCalc {
     const expectedOutput = numerator / denominator;
 
     // Spot price before trade
-    const spotPrice = parseFloat(reserveOut.toString()) / parseFloat(reserveIn.toString());
+    const spotPrice = Number(ethers.formatUnits(reserveOut, pair.decimals1))
+      / Number(ethers.formatUnits(reserveIn, pair.decimals0));
 
     // Price received in this trade
-    const amountInFloat  = parseFloat(amountIn.toString());
-    const amountOutFloat = parseFloat(expectedOutput.toString());
+    const amountInFloat  = Number(ethers.formatUnits(amountIn, pair.decimals0));
+    const amountOutFloat = Number(ethers.formatUnits(expectedOutput, pair.decimals1));
     const execPrice      = amountOutFloat / amountInFloat;
 
     // Price impact = (spotPrice - execPrice) / spotPrice
@@ -119,10 +120,13 @@ class SlippageCalc {
 
     // Convert sqrtPriceX96 to float
     const Q96       = 2n ** 96n;
-    const sqrtPrice = Number(pool.sqrtPriceX96) / Number(Q96);
+    const sqrtPrice = Number(pool.sqrtPriceX96.toString()) / Number(Q96.toString());
+    if (!Number.isFinite(sqrtPrice) || sqrtPrice <= 0) {
+      return this._errorResult("V3 invalid sqrtPrice");
+    }
 
     // We need liquidity — use a safe fallback if not cached
-    const liquidity = pool.liquidity ? Number(pool.liquidity) : 1e18;
+    const liquidity = pool.liquidity ? Number(pool.liquidity.toString()) : 1e18;
 
     // Effective reserves
     const effectiveR0 = BigInt(Math.floor(liquidity / sqrtPrice));
@@ -147,9 +151,10 @@ class SlippageCalc {
 
     const expectedOutput = numerator / denominator;
 
-    const spotPrice     = Number(effectiveR1) / Number(effectiveR0);
-    const amountInFloat = Number(amountIn);
-    const execPrice     = Number(expectedOutput) / amountInFloat;
+    const spotPrice     = Number(ethers.formatUnits(effectiveR1, pair.decimals1))
+      / Number(ethers.formatUnits(effectiveR0, pair.decimals0));
+    const amountInFloat = Number(ethers.formatUnits(amountIn, pair.decimals0));
+    const execPrice     = Number(ethers.formatUnits(expectedOutput, pair.decimals1)) / amountInFloat;
     const priceImpact   = Math.abs((spotPrice - execPrice) / spotPrice) * 100;
 
     const feePercent    = feePpm / 10000; // e.g. 0.3 for 3000 ppm

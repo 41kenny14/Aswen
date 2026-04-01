@@ -8,40 +8,43 @@
  *   npx hardhat test --network hardhat
  */
 
-const { expect }        = require("chai");
-const { ethers }        = require("hardhat");
-const { loadFixture }   = require("@nomicfoundation/hardhat-toolbox/network-helpers");
+const { expect }      = require("chai");
+const { ethers }      = require("hardhat");
+const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 
 // ─── Base mainnet addresses ───────────────────────────────────────────────────
 
 const AAVE_ADDRESSES_PROVIDER = "0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D";
-const USDC   = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const WETH   = "0x4200000000000000000000000000000000000006";
-
-const USDC_ABI = [
-  "function balanceOf(address) external view returns (uint256)",
-  "function transfer(address, uint256) external returns (bool)",
-  "function approve(address, uint256) external returns (bool)",
-];
+const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const WETH = "0x4200000000000000000000000000000000000006";
 
 // ─── Fixture ──────────────────────────────────────────────────────────────────
 
 async function deployFixture() {
   const [owner, attacker] = await ethers.getSigners();
 
-  const Factory = await ethers.getContractFactory("FlashLoanArbitrage");
+  const Factory = await ethers.getContractFactory("FlashLoanArbitrageV2");
   const contract = await Factory.deploy(AAVE_ADDRESSES_PROVIDER);
   await contract.waitForDeployment();
 
-  const usdc = new ethers.Contract(USDC, USDC_ABI, owner);
+  return { contract, owner, attacker };
+}
 
-  return { contract, owner, attacker, usdc };
+function buildStep() {
+  return {
+    dexType:      0,
+    router:       ethers.ZeroAddress,
+    tokenIn:      USDC,
+    tokenOut:     WETH,
+    fee:          3000,
+    v3Path:       "0x",
+    amountOutMin: 0n,
+  };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("FlashLoanArbitrage", function () {
-
+describe("FlashLoanArbitrageV2", function () {
   describe("Deployment", function () {
     it("Sets the correct owner", async function () {
       const { contract, owner } = await loadFixture(deployFixture);
@@ -62,18 +65,27 @@ describe("FlashLoanArbitrage", function () {
   describe("Access Control", function () {
     it("Non-owner cannot call requestFlashLoan", async function () {
       const { contract, attacker } = await loadFixture(deployFixture);
+      const now = Math.floor(Date.now() / 1000);
+      const fakeStep = buildStep();
 
       await expect(
-        contract.connect(attacker).requestFlashLoan(USDC, 1000n, [], 0n)
-      ).to.be.revertedWith("FlashLoanArb: not owner");
+        contract.connect(attacker).requestFlashLoan(
+          USDC,
+          1000n,
+          [fakeStep, fakeStep],
+          0n,
+          BigInt(now + 30),
+          ethers.ZeroHash
+        )
+      ).to.be.revertedWith("V2: not owner");
     });
 
-    it("Non-owner cannot call rescueTokens", async function () {
+    it("Non-owner cannot call rescue", async function () {
       const { contract, attacker } = await loadFixture(deployFixture);
 
       await expect(
-        contract.connect(attacker).rescueTokens(USDC, 1n)
-      ).to.be.revertedWith("FlashLoanArb: not owner");
+        contract.connect(attacker).rescue(USDC, 1n)
+      ).to.be.revertedWith("V2: not owner");
     });
 
     it("Prevents direct executeOperation calls (not from pool)", async function () {
@@ -83,54 +95,53 @@ describe("FlashLoanArbitrage", function () {
         contract.connect(attacker).executeOperation(
           USDC, 1000n, 1n, attacker.address, "0x"
         )
-      ).to.be.revertedWith("FlashLoanArb: caller not pool");
+      ).to.be.revertedWith("V2: not pool");
     });
   });
 
   describe("Configuration", function () {
-    it("Owner can update max slippage", async function () {
+    it("Owner can update config", async function () {
       const { contract } = await loadFixture(deployFixture);
-      await contract.setMaxSlippage(200n);
+      await contract.setConfig(200n, 1_000_000n);
       expect(await contract.maxSlippageBps()).to.equal(200n);
+      expect(await contract.minProfitWei()).to.equal(1_000_000n);
     });
 
     it("Reverts slippage > 1000 bps (10%)", async function () {
       const { contract } = await loadFixture(deployFixture);
-      await expect(contract.setMaxSlippage(1001n))
-        .to.be.revertedWith("FlashLoanArb: slippage too high");
-    });
-
-    it("Owner can update min profit", async function () {
-      const { contract } = await loadFixture(deployFixture);
-      await contract.setMinProfit(1_000_000n); // 1 USDC
-      expect(await contract.minProfitWei()).to.equal(1_000_000n);
+      await expect(contract.setConfig(1001n, 0n))
+        .to.be.revertedWith("V2: slippage cap exceeded");
     });
   });
 
   describe("requestFlashLoan validations", function () {
     it("Reverts with < 2 swap steps", async function () {
       const { contract } = await loadFixture(deployFixture);
+      const now = Math.floor(Date.now() / 1000);
+      const fakeStep = buildStep();
 
       await expect(
-        contract.requestFlashLoan(USDC, 1000n, [], 0n)
-      ).to.be.revertedWith("FlashLoanArb: need at least 2 swaps");
+        contract.requestFlashLoan(USDC, 1000n, [fakeStep], 0n, BigInt(now + 30), ethers.ZeroHash)
+      ).to.be.revertedWith("V2: need >= 2 steps");
     });
 
     it("Reverts with zero amount", async function () {
       const { contract } = await loadFixture(deployFixture);
-
-      const fakeStep = {
-        dexType:      0,
-        router:       ethers.ZeroAddress,
-        tokenIn:      USDC,
-        tokenOut:     WETH,
-        fee:          3000,
-        amountOutMin: 0n,
-      };
+      const now = Math.floor(Date.now() / 1000);
+      const fakeStep = buildStep();
 
       await expect(
-        contract.requestFlashLoan(USDC, 0n, [fakeStep, fakeStep], 0n)
-      ).to.be.revertedWith("FlashLoanArb: invalid amount");
+        contract.requestFlashLoan(USDC, 0n, [fakeStep, fakeStep], 0n, BigInt(now + 30), ethers.ZeroHash)
+      ).to.be.revertedWith("V2: zero amount");
+    });
+
+    it("Reverts with expired deadline", async function () {
+      const { contract } = await loadFixture(deployFixture);
+      const fakeStep = buildStep();
+
+      await expect(
+        contract.requestFlashLoan(USDC, 1000n, [fakeStep, fakeStep], 0n, 1n, ethers.ZeroHash)
+      ).to.be.revertedWith("V2: deadline passed");
     });
   });
 });

@@ -38,6 +38,7 @@ class Scanner {
     this.state      = preloaderState;  // pools, routes, contractCache, wsContracts
     this.wsProvider = wsProvider;
     this.pipeline   = new PipelineRunner(preloaderState);
+    this.failsafe   = null;
 
     this._running     = false;
     this._listeners   = [];            // { contract, event, handler }
@@ -81,7 +82,7 @@ class Scanner {
   // ── Initial price fetch (batch via multicall) ─────────────────────────────────
 
   async _doInitialPriceFetch() {
-    const { pools, contractCache } = this.state;
+    const { pools } = this.state;
     const t0 = Date.now();
 
     logger.info(`📥 Fetching initial prices for ${pools.length} pools…`);
@@ -102,7 +103,16 @@ class Scanner {
       }))) : [],
       v3Pools.length ? mc.call(v3Pools.map(p => ({
         target: p.address,
-        abi:    ["function slot0() external view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)", "function liquidity() external view returns (uint128)"],
+        abi:    ["function liquidity() external view returns (uint128)"],
+        method: "liquidity",
+        args:   [],
+      }))) : [],
+    ]);
+
+    const [v3SlotResults] = await Promise.all([
+      v3Pools.length ? mc.call(v3Pools.map(p => ({
+        target: p.address,
+        abi:    ["function slot0() external view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"],
         method: "slot0",
         args:   [],
       }))) : [],
@@ -113,8 +123,10 @@ class Scanner {
       if (res?.result) this._applyV2Reserves(v2Pools[i], res.result[0], res.result[1]);
     }
     for (let i = 0; i < v3Pools.length; i++) {
-      const res = v3Results[i];
-      if (res?.result) this._applyV3SqrtPrice(v3Pools[i], res.result[0]);
+      const liqRes = v3Results[i];
+      const slotRes = v3SlotResults[i];
+      if (liqRes?.result) v3Pools[i].liquidity = liqRes.result[0];
+      if (slotRes?.result) this._applyV3SqrtPrice(v3Pools[i], slotRes.result[0]);
     }
 
     logger.info(`✅ Initial prices loaded in ${Date.now() - t0}ms`);
@@ -133,7 +145,8 @@ class Scanner {
           this._onPoolUpdated(pool);
         });
       } else {
-        this._listen(wsContract, "Swap", pool, (_s, _r, _a0, _a1, sqrtPriceX96) => {
+        this._listen(wsContract, "Swap", pool, (_s, _r, _a0, _a1, sqrtPriceX96, liquidity) => {
+          pool.liquidity = liquidity;
           this._applyV3SqrtPrice(pool, sqrtPriceX96);
           this._onPoolUpdated(pool);
         });
@@ -163,8 +176,8 @@ class Scanner {
     pool.lastUpdate = Date.now();
 
     // price = reserve1 / reserve0 adjusted for decimals
-    const f0 = Number(r0) / (10 ** pool.pair.decimals0);
-    const f1 = Number(r1) / (10 ** pool.pair.decimals1);
+    const f0 = Number(ethers.formatUnits(r0, pool.pair.decimals0));
+    const f1 = Number(ethers.formatUnits(r1, pool.pair.decimals1));
     pool.price = f0 > 0 ? f1 / f0 : 0;
   }
 
@@ -173,7 +186,7 @@ class Scanner {
     pool.lastUpdate   = Date.now();
 
     // price = (sqrtPriceX96 / 2^96)^2 * 10^(dec0-dec1)
-    const sq  = Number(sqrtPriceX96) / Number(Q96);
+    const sq  = Number(sqrtPriceX96.toString()) / Number(Q96.toString());
     const adj = 10 ** (pool.pair.decimals0 - pool.pair.decimals1);
     pool.price = sq * sq * adj;
   }
@@ -182,9 +195,7 @@ class Scanner {
 
   _onPoolUpdated(updatedPool) {
     // Find all routes that include this pool
-    const affectedRoutes = this.state.routes.filter(
-      r => r.poolA === updatedPool || r.poolB === updatedPool
-    );
+    const affectedRoutes = this.state.routesByPool.get(updatedPool.address.toLowerCase()) ?? [];
 
     if (affectedRoutes.length === 0) return;
 
@@ -196,6 +207,7 @@ class Scanner {
   // ── Route evaluation (hot path — must be fast) ────────────────────────────────
 
   async _evaluateRoute(route) {
+    if (this.failsafe?.isCircuitOpen?.()) return;
     const { poolA, poolB } = route;
 
     // Reject stale data
@@ -284,6 +296,11 @@ class Scanner {
   }
 
   getStats() { return { ...this.stats }; }
+
+  attachFailsafe(failsafe) {
+    this.failsafe = failsafe;
+    this.pipeline.attachFailsafe?.(failsafe);
+  }
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

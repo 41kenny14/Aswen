@@ -77,6 +77,7 @@ class Preloader {
       poolMap:       new Map(), // poolAddress → descriptor
       tokenMeta:     new Map(), // tokenAddress → { decimals, symbol }
       routes:        [],      // all valid arb routes
+      routesByPool:  new Map(), // poolAddress -> route[]
       contractCache: new Map(), // poolAddress → ethers.Contract (http)
       wsContracts:   new Map(), // poolAddress → ethers.Contract (ws)
       aavePool:      null,    // Aave pool address (string)
@@ -288,12 +289,20 @@ class Preloader {
       for (let i = 0; i < pools.length; i++) {
         for (let j = i + 1; j < pools.length; j++) {
           // Both directions
-          this.state.routes.push({
+          const route = {
             id:      `${symbol}|${pools[i].dex.name}→${pools[j].dex.name}`,
             symbol,
             poolA:   pools[i],
             poolB:   pools[j],
-          });
+          };
+          this.state.routes.push(route);
+
+          const a = pools[i].address.toLowerCase();
+          const b = pools[j].address.toLowerCase();
+          if (!this.state.routesByPool.has(a)) this.state.routesByPool.set(a, []);
+          if (!this.state.routesByPool.has(b)) this.state.routesByPool.set(b, []);
+          this.state.routesByPool.get(a).push(route);
+          this.state.routesByPool.get(b).push(route);
         }
       }
     }
